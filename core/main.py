@@ -1,5 +1,5 @@
 """
-ReelForge backend: Flask + Railtracks-style tool nodes, SSE progress, FFmpeg 9:16 assembly.
+qwkly backend: Flask + Railtracks-style tool nodes, SSE progress, FFmpeg 9:16 assembly.
 Run: uvicorn main:asgi_app --app-dir /path/to/core --host 0.0.0.0 --port 8000
 """
 
@@ -31,11 +31,21 @@ BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-SENSO_API_BASE = os.environ.get("SENSO_API_BASE", "https://sdk.senso.ai/api/v1")
+# APIv2 org search: https://apiv2.senso.ai/api/v1/org/search (X-API-Key)
+SENSO_API_BASE = os.environ.get("SENSO_API_BASE", "https://apiv2.senso.ai/api/v1").rstrip("/")
+SENSO_SEARCH_PATH = os.environ.get("SENSO_SEARCH_PATH", "/org/search")
+# Generate still lives on sdk host for many tenants (not under apiv2 /org). Unset = default sdk URL; "" = disable fallback.
+_senso_gen = os.environ.get("SENSO_GENERATE_URL")
+if _senso_gen is None:
+    SENSO_GENERATE_URL = "https://sdk.senso.ai/api/v1/generate"
+else:
+    SENSO_GENERATE_URL = _senso_gen.strip()
 KIE_API_BASE = os.environ.get("KIE_API_BASE", "https://api.kie.ai")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+# Text generation via Responses API (not Chat Completions). Pin snapshot in production.
+OPENAI_TEXT_MODEL = os.environ.get("OPENAI_TEXT_MODEL", "gpt-5.4-2026-03-05")
 KIE_API_KEY = os.environ.get("KIE_API_KEY", "")
-SENSO_API_KEY = os.environ.get("SENSO_API_KEY", "")
+SENSO_KEY = os.environ.get("SENSO_KEY", "")
 KIE_CALLBACK_URL = os.environ.get(
     "KIE_CALLBACK_URL",
     "https://httpbin.org/post",
@@ -52,6 +62,17 @@ def _kie_suno_model() -> str:
 
 UNKEY_VERIFY = os.environ.get("UNKEY_VERIFY", "").lower() in ("1", "true", "yes")
 UNKEY_ROOT_KEY = os.environ.get("UNKEY_ROOT_KEY", "")
+
+# OpenAI TTS (voiceover mixed under Suno music). See https://platform.openai.com/docs/guides/text-to-speech
+TTS_ENABLED = os.environ.get("TTS_ENABLED", "true").lower() not in ("0", "false", "no")
+TTS_MODEL = os.environ.get("TTS_MODEL", "tts-1")
+TTS_VOICE = os.environ.get("TTS_VOICE", "nova")
+# Quieter Suno bed under louder TTS (override via env)
+TTS_MUSIC_VOLUME = float(os.environ.get("TTS_MUSIC_VOLUME", "0.14"))
+TTS_VOICE_VOLUME = float(os.environ.get("TTS_VOICE_VOLUME", "1.25"))
+# Slideshow: fixed seconds per image; total length capped (extra images dropped)
+MAX_VIDEO_DURATION_SEC = float(os.environ.get("MAX_VIDEO_DURATION_SEC", "30"))
+SLIDE_DURATION_SEC = float(os.environ.get("SLIDE_DURATION_SEC", "3"))
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": os.environ.get("CORS_ORIGINS", "*")}})
@@ -100,13 +121,13 @@ def _verify_unkey_bearer() -> tuple[bool, str]:
 @rt.function_node
 def research_topic(topic: str) -> str:
     """Senso search / generate fallback for trending-style context."""
-    if not SENSO_API_KEY:
+    if not SENSO_KEY:
         return (
             f"No Senso API key; using topic only. Topic: {topic}. "
             "Assume short-form vertical video trends for this niche."
         )
     headers = {
-        "X-API-Key": SENSO_API_KEY,
+        "X-API-Key": SENSO_KEY,
         "Content-Type": "application/json",
     }
     query = (
@@ -114,21 +135,32 @@ def research_topic(topic: str) -> str:
         f"vertical video (TikTok/Reels/Shorts) about: {topic}"
     )
     with httpx.Client(timeout=60.0) as client:
+        search_url = f"{SENSO_API_BASE}{SENSO_SEARCH_PATH}"
         r = client.post(
-            f"{SENSO_API_BASE}/search",
+            search_url,
             headers=headers,
             json={"query": query, "max_results": 5},
         )
         if r.status_code == 200:
             data = r.json()
-            ans = data.get("answer") or ""
+            ans = (
+                (data.get("answer") or "")
+                or (data.get("data") or {}).get("answer")
+                or ""
+            )
+            if isinstance(ans, list):
+                ans = "\n".join(str(x) for x in ans)
             if ans:
-                return ans[:8000]
+                return str(ans)[:8000]
+        gen_url = SENSO_GENERATE_URL.strip()
+        if not gen_url:
+            return f"Senso returned no body; rely on topic: {topic}"
         gen = client.post(
-            f"{SENSO_API_BASE}/generate",
+            gen_url,
             headers=headers,
             json={
-                "content_type": "bullet_list",
+                # Senso docs examples use blog_post; bullet_list may not be valid for all workspaces
+                "content_type": "blog_post",
                 "instructions": query,
                 "save": False,
                 "max_results": 3,
@@ -142,29 +174,25 @@ def research_topic(topic: str) -> str:
     return f"Senso returned no body; rely on topic: {topic}"
 
 
+_SCRIPT_JSON_INSTRUCTIONS = (
+    "You write viral short-form on-screen lines. "
+    'Return JSON: {"lines": ["line1", ...]} with 5 to 7 short lines, '
+    "no hashtags, punchy, second person or imperative, under 80 chars each."
+)
+
+
 @rt.function_node
 def generate_script(context: str) -> list[str]:
-    """Return 5–7 punchy lines for the reel."""
+    """Return 5–7 punchy lines for the reel (Responses API)."""
     client = _client_openai()
-    completion = client.chat.completions.create(
-        model="gpt-4o",
-        response_format={"type": "json_object"},
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You write viral short-form on-screen lines. "
-                    "Return JSON: {\"lines\": [\"line1\", ...]} with 5 to 7 short lines, "
-                    "no hashtags, punchy, second person or imperative, under 80 chars each."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Context:\n{context}\n\nProduce the JSON.",
-            },
-        ],
+    response = client.responses.create(
+        model=OPENAI_TEXT_MODEL,
+        reasoning={"effort": "low"},
+        instructions=_SCRIPT_JSON_INSTRUCTIONS,
+        input=f"Context:\n{context}\n\nProduce the JSON.",
+        text={"format": {"type": "json_object"}},
     )
-    raw = completion.choices[0].message.content or "{}"
+    raw = (response.output_text or "").strip() or "{}"
     data = json.loads(raw)
     lines = data.get("lines") or []
     out = [str(x).strip() for x in lines if str(x).strip()]
@@ -235,6 +263,27 @@ def generate_music(mood: str = "upbeat energetic") -> str:
 
 
 @rt.function_node
+def generate_tts(lines: list[str]) -> str:
+    """OpenAI TTS: spoken voiceover from script lines. Returns path to MP3 or \"\" if disabled."""
+    if not TTS_ENABLED or not lines:
+        return ""
+    client = _client_openai()
+    text = ". ".join(lines).strip()
+    if not text:
+        return ""
+    if len(text) > 4096:
+        text = text[:4093] + "..."
+    out = OUTPUT_DIR / f"tts_{uuid.uuid4().hex}.mp3"
+    speech = client.audio.speech.create(
+        model=TTS_MODEL,
+        voice=TTS_VOICE,
+        input=text,
+    )
+    speech.write_to_file(out)
+    return str(out)
+
+
+@rt.function_node
 def generate_visuals(script_lines: list[str]) -> list[str]:
     """DALL-E 3 per line; returns local file paths (JPEG)."""
     client = _client_openai()
@@ -261,28 +310,6 @@ def generate_visuals(script_lines: list[str]) -> list[str]:
         p.write_bytes(im.content)
         paths.append(str(p))
     return paths
-
-
-def _ffprobe_duration(audio_path: str) -> float:
-    out = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            audio_path,
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    try:
-        return float(out.stdout.strip() or 30.0)
-    except ValueError:
-        return 30.0
 
 
 def _sanitize_ass_text(text: str) -> str:
@@ -314,6 +341,36 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     path.write_text("".join(lines), encoding="utf-8")
 
 
+def _mix_music_and_voiceover(music_path: Path, tts_path: Path, out_audio: Path) -> None:
+    """Mix instrumental (quieter) with TTS (louder); pad to longest stream."""
+    filt = (
+        f"[0:a]volume={TTS_MUSIC_VOLUME}[m];"
+        f"[1:a]volume={TTS_VOICE_VOLUME}[v];"
+        f"[m][v]amix=inputs=2:duration=longest:dropout_transition=2[aout]"
+    )
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(music_path),
+            "-i",
+            str(tts_path),
+            "-filter_complex",
+            filt,
+            "-map",
+            "[aout]",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            str(out_audio),
+        ],
+        capture_output=True,
+        check=True,
+    )
+
+
 def _format_ass_time(seconds: float) -> str:
     if seconds < 0:
         seconds = 0
@@ -330,22 +387,44 @@ def assemble_video(
     image_paths: list[str],
     audio_url: str,
     captions: list[str],
+    tts_audio_path: str | None = None,
 ) -> str:
-    """Download audio, build concat slideshow + ASS, return path to MP4."""
+    """Download music, optionally mix with TTS voiceover, concat slideshow + ASS, return MP4 path."""
     if not image_paths:
         raise RuntimeError("No images")
-    work = Path(tempfile.mkdtemp(prefix="reelforge_"))
-    audio_local = work / "audio.mp3"
+    max_slides = max(
+        1,
+        int(MAX_VIDEO_DURATION_SEC / max(SLIDE_DURATION_SEC, 0.5)),
+    )
+    image_paths = image_paths[:max_slides]
+    work = Path(tempfile.mkdtemp(prefix="qwkly_"))
+    music_local = work / "music_in.mp3"
     with httpx.Client(timeout=120.0) as h:
         ar = h.get(audio_url)
         ar.raise_for_status()
-        audio_local.write_bytes(ar.content)
+        music_local.write_bytes(ar.content)
 
-    duration = _ffprobe_duration(str(audio_local))
-    n = len(image_paths)
-    seg = max(duration / n, 1.25)
-    if seg * n > duration + 0.1:
-        seg = duration / n
+    audio_local = work / "audio_final.m4a"
+    if tts_audio_path and Path(tts_audio_path).is_file():
+        _mix_music_and_voiceover(music_local, Path(tts_audio_path), audio_local)
+    else:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(music_local),
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                str(audio_local),
+            ],
+            capture_output=True,
+            check=True,
+        )
+
+    seg = SLIDE_DURATION_SEC
 
     scaled: list[Path] = []
     for i, ip in enumerate(image_paths):
@@ -380,7 +459,7 @@ def assemble_video(
     caps = captions[: len(scaled)] if captions else [f"Slide {i+1}" for i in range(len(scaled))]
     _write_ass(caps, seg, ass_path)
 
-    out_mp4 = OUTPUT_DIR / f"reel_{uuid.uuid4().hex}.mp4"
+    out_mp4 = OUTPUT_DIR / f"qwkly_{uuid.uuid4().hex}.mp4"
     vf = f"ass={ass_path.as_posix()},format=yuv420p"
     subprocess.run(
         [
@@ -412,16 +491,17 @@ def assemble_video(
 
 
 # Optional Railtracks agent (LLM + tools) — not used for deterministic SSE pipeline.
-ReelAgent = rt.agent_node(
-    llm=rt.llm.OpenAILLM("gpt-4o"),
+QwklyAgent = rt.agent_node(
+    llm=rt.llm.OpenAILLM(OPENAI_TEXT_MODEL),
     system_message=(
         "You create viral short-form videos. When asked, call tools in order: "
-        "research_topic, generate_script, generate_music, generate_visuals, assemble_video."
+        "research_topic, generate_script, generate_music, generate_tts, generate_visuals, assemble_video."
     ),
     tool_nodes=(
         research_topic,
         generate_script,
         generate_music,
+        generate_tts,
         generate_visuals,
         assemble_video,
     ),
@@ -442,6 +522,13 @@ def run_pipeline_events(topic: str) -> Generator[str, None, None]:
     audio_url = generate_music()
     yield _sse("music", {"status": "done", "audio_url": audio_url})
 
+    yield _sse("tts", {"status": "started"})
+    tts_path = generate_tts(lines)
+    yield _sse(
+        "tts",
+        {"status": "done", "skipped": not bool(tts_path)},
+    )
+
     yield _sse("visuals", {"status": "started", "count": len(lines)})
     img_paths = generate_visuals(lines)
     yield _sse(
@@ -450,7 +537,7 @@ def run_pipeline_events(topic: str) -> Generator[str, None, None]:
     )
 
     yield _sse("render", {"status": "started"})
-    video_path = assemble_video(img_paths, audio_url, lines)
+    video_path = assemble_video(img_paths, audio_url, lines, tts_path or None)
     name = Path(video_path).name
     base = ""
     if has_request_context():
@@ -496,8 +583,9 @@ def generate():
 
 
 @app.get("/")
+@app.get("/health")
 def health():
-    return {"ok": True, "service": "reelforge-core"}
+    return {"ok": True, "service": "qwkly-core"}
 
 
 @app.get("/videos/<path:name>")

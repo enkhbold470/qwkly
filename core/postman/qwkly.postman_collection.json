@@ -1,0 +1,97 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-qwkly-api",
+    "name": "qwkly API",
+    "description": "Tests for the qwkly Flask backend (research → script → Suno music → OpenAI TTS → DALL·E visuals → FFmpeg render).\n\n**POST /generate** returns **SSE** (`text/event-stream`), not one JSON object. In Postman, view the **raw** response and wait for the stream to finish.\n\n**SSE events (in order):** `research` → `script` → `music` → `tts` → `visuals` → `render` → `done` (or `error`).\n\n- **tts** includes `{ \"skipped\": true }` when `TTS_ENABLED=false`.\n\nSet **Authorization: Bearer** if the server has `UNKEY_VERIFY=true`. Keys for OpenAI / kie / Senso live in `core/.env` on the server—not in Postman.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "unkeyToken",
+      "value": ""
+    },
+    {
+      "key": "videoFilename",
+      "value": "replace-with-filename-from-done-event.mp4"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health",
+            "description": "JSON: `{ \"ok\": true, \"service\": \"qwkly-core\" }`."
+          },
+          "response": []
+        },
+        {
+          "name": "GET / (same as health)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/",
+            "description": "Same JSON as `/health`."
+          },
+          "response": []
+        }
+      ],
+      "description": "Liveness check before running a long **Generate** request."
+    },
+    {
+      "name": "Generate reel (SSE stream)",
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "text/event-stream"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{unkeyToken}}",
+            "disabled": true,
+            "description": "Enable when server has UNKEY_VERIFY=true"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"topic\": \"best morning routine tips\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/generate",
+        "description": "Long-running. **SSE** events: `research`, `script`, `music`, `tts`, `visuals`, `render`, `done`, or `error`."
+      },
+      "response": []
+    },
+    {
+      "name": "Download video (after generate)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/videos/{{videoFilename}}",
+        "description": "Use `filename` from the last `done` event. **Send and Download** to save the MP4."
+      },
+      "response": []
+    }
+  ]
+}

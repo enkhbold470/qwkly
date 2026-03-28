@@ -1,6 +1,6 @@
 Solid idea. You have exactly **3 hours left**. Here's the full plan.
 
-## The Agent: "ReelForge"
+## The Agent: "qwkly"
 
 User types a topic → agent researches trending context → writes a script → generates upbeat music → assembles a 9:16 vertical video with captions + beat-synced visuals. Fully autonomous after one prompt.
 
@@ -47,7 +47,7 @@ def assemble_video(images, audio_url, captions) -> str:
     # FFmpeg: 9:16, overlay captions, merge audio
     return ffmpeg_assemble(images, audio_url, captions)
 
-ReelAgent = rt.agent_node(
+QwklyAgent = rt.agent_node(
     llm=rt.llm.OpenAILLM("gpt-4o"),
     system_message="You create viral short-form videos. Use tools in order.",
     tool_nodes=[research_topic, generate_script, generate_music,

@@ -1,0 +1,11 @@
+Short-form vertical video (TikTok / Reels / Shorts) — notes for scripting
+
+Hooks that work: pattern interrupts in the first 1–2 seconds; bold claim or question; “stop scrolling” energy without clickbait lies.
+
+Structure: hook → one idea per beat → clear CTA (follow, save, comment). Keep on-screen text under ~8 words per line when possible.
+
+Trending angles: transformation, before/after, myth vs fact, “things nobody tells you,” routines, tools under $X.
+
+Audience pain points: time, consistency, fear of being on camera, not knowing what to post, algorithm anxiety.
+
+Tone: conversational, second person, no long paragraphs; energy matches niche (calm for wellness, fast for finance tips).

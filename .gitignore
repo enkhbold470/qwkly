@@ -30,7 +30,7 @@ venv/
 ENV/
 core/.venv/
 
-# ReelForge generated outputs
+# qwkly generated outputs
 core/output/
 *.mp4
 *.mp3
