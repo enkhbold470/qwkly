@@ -3,6 +3,7 @@ import { ReelForgeStep } from "@/lib/reelforge-types";
 import { LoadingBox } from "./loading-box";
 
 type StepCardProps = {
+  active?: boolean;
   busy: boolean;
   index: number;
   step: ReelForgeStep;
@@ -23,7 +24,7 @@ function StringList({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-export function StepCard({ busy, index, step }: StepCardProps) {
+export function StepCard({ active = false, busy, index, step }: StepCardProps) {
   const badgeLabel = {
     blocked: "Waiting",
     loading: "Running",
@@ -32,7 +33,7 @@ export function StepCard({ busy, index, step }: StepCardProps) {
   }[step.state];
 
   return (
-    <article className="step-card">
+    <article className={clsx("step-card", active && "active-step-card")}>
       <div className="step-header">
         <div className="step-title-wrap">
           <span className="step-index">{index}</span>

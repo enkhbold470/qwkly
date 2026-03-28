@@ -12,14 +12,14 @@ export function PipelineOverview({
   return (
     <aside className="overview-card">
       <div className="overview-pill">
-        <span className="badge complete">Human-in-the-loop</span>
-        <span>Cursor-style approvals</span>
+        <span className="badge complete">Live pipeline</span>
+        <span>Prompt in, reel out</span>
       </div>
 
-      <h3>Control panel</h3>
+      <h3>Run overview</h3>
       <p>
-        Step cards unlock one by one. Each stage gets a pretty loading box and a
-        clear backend handoff note.
+        All progress lives inline with the conversation so the user can follow
+        one continuous flow instead of switching between separate panes.
       </p>
 
       <div className="overview-stats">

@@ -5,6 +5,7 @@ import { ApprovalRail } from "@/components/approval-rail";
 import { ChatComposer } from "@/components/chat-composer";
 import { MessageBubble } from "@/components/message-bubble";
 import { PipelineOverview } from "@/components/pipeline-overview";
+import { StepCard } from "@/components/step-card";
 import { initialSteps } from "@/lib/reelforge-data";
 import {
   DoneSsePayload,
@@ -26,15 +27,6 @@ type ParsedSseEvent = {
 };
 
 const decoder = new TextDecoder();
-
-const stepForEvent: Record<string, ReelForgeStepId> = {
-  research: "research",
-  script: "script",
-  music: "music",
-  visuals: "visuals",
-  render: "assemble",
-  done: "assemble"
-};
 
 const createAssistantIntro = (topic: string): ReelForgeMessage => ({
   id: crypto.randomUUID(),
@@ -101,6 +93,19 @@ export default function Home() {
     if (!run) return 0;
     return run.steps.filter((step) => step.state === "complete").length;
   }, [run]);
+
+  const activeStep = useMemo(() => {
+    if (!run) return null;
+    if (busyStep) {
+      return run.steps.find((step) => step.id === busyStep) ?? null;
+    }
+    return (
+      run.steps.find((step) => step.state === "loading") ??
+      run.steps.find((step) => step.state === "error") ??
+      run.steps[run.steps.length - 1] ??
+      null
+    );
+  }, [busyStep, run]);
 
   const updateStep = (stepId: ReelForgeStepId, patch: Partial<ReelForgeStep>) => {
     setRun((current) => {
@@ -382,14 +387,14 @@ export default function Home() {
   };
 
   return (
-    <main className="app-shell">
-      <section className="hero-panel">
+    <main className="app-shell single-flow-shell">
+      <section className="hero-panel single-flow-hero">
         <div className="hero-copy">
           <span className="eyebrow">Prompt-first pipeline</span>
           <h1>qwkly</h1>
           <p>
-            The first stage now uses your prompt directly. Research, script,
-            music, visuals, and render continue automatically from the backend.
+            One prompt, one scroll. The conversation, the active task, and the
+            pipeline timeline all live in the same place.
           </p>
         </div>
 
@@ -400,12 +405,12 @@ export default function Home() {
         />
       </section>
 
-      <section className="workspace-grid">
-        <div className="chat-panel">
-          <div className="panel-header">
+      <section className="single-flow-thread">
+        <div className="thread-panel">
+          <div className="thread-header">
             <div>
-              <p className="panel-kicker">Live thread</p>
-              <h2>Pipeline chat</h2>
+              <p className="panel-kicker">Conversation</p>
+              <h2>qwkly chat</h2>
             </div>
 
             <button className="ghost-button" onClick={handleReset} type="button">
@@ -413,36 +418,61 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="message-list">
+          <div className="message-list inline-message-list">
             {messages.map((message) => (
               <MessageBubble key={message.id} message={message} />
             ))}
           </div>
 
-          <ChatComposer
-            disabled={Boolean(run && busyStep)}
-            onSubmit={handleSubmitTopic}
-          />
-        </div>
-
-        <div className="status-panel">
-          <div className="panel-header">
-            <div>
-              <p className="panel-kicker">Pipeline rail</p>
-              <h2>Live stages</h2>
-            </div>
-          </div>
-
           {run ? (
-            <ApprovalRail
-              busyStep={busyStep}
-              run={run}
-            />
+            <section className="workspace-card">
+              <div className="workspace-header">
+                <div>
+                  <p className="panel-kicker">Active task</p>
+                  <h2>Pipeline workspace</h2>
+                </div>
+                {busyStep ? (
+                  <span className="workspace-status">
+                    Running {activeStep?.title.toLowerCase() ?? "pipeline"}
+                  </span>
+                ) : (
+                  <span className="workspace-status complete-status">
+                    Pipeline finished
+                  </span>
+                )}
+              </div>
+
+              {activeStep ? (
+                <div className="spotlight-card">
+                  <StepCard
+                    active
+                    busy={Boolean(busyStep)}
+                    index={run.steps.findIndex((step) => step.id === activeStep.id) + 1}
+                    step={activeStep}
+                  />
+                </div>
+              ) : null}
+
+              <div className="timeline-section">
+                <div className="timeline-header">
+                  <p className="panel-kicker">All stages</p>
+                  <h3>Timeline</h3>
+                </div>
+                <ApprovalRail busyStep={busyStep} run={run} />
+              </div>
+            </section>
           ) : (
-            <div className="empty-state">
-              <p>Submit a prompt to stream the backend pipeline into qwkly.</p>
+            <div className="empty-state inline-empty-state">
+              <p>Submit a prompt to start the backend pipeline in this same thread.</p>
             </div>
           )}
+
+          <div className="composer-dock">
+            <ChatComposer
+              disabled={Boolean(run && busyStep)}
+              onSubmit={handleSubmitTopic}
+            />
+          </div>
         </div>
       </section>
     </main>

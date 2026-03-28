@@ -14,6 +14,7 @@ export function ApprovalRail({
     <div className="approval-rail">
       {run.steps.map((step, index) => (
         <StepCard
+          active={busyStep === step.id}
           key={step.id}
           busy={busyStep === step.id}
           index={index + 1}
