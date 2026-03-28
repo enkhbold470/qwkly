@@ -1,0 +1,58 @@
+# Environment and secrets (keep templates: .env.example)
+.env
+.env.*
+!.env.example
+core/.env
+core/.env.*
+!core/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+core/.venv/
+
+# ReelForge generated outputs
+core/output/
+*.mp4
+*.mp3
+*.wav
+
+# IDE and OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs and temp
+*.log
+tmp/
+temp/
+*.tmp
+
+# Node (if frontend adds tooling later)
+node_modules/
+.next/
+out/
+.turbo/
+core/.railtracks/
