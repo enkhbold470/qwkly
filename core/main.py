@@ -464,10 +464,6 @@ def run_pipeline_events(topic: str) -> Generator[str, None, None]:
         },
     )
 
-@app.get("/")
-def models():
-    return { "running_models": _KIE_SUNO_MODELS, "current_model": _kie_suno_model()}
-
 @app.post("/generate")
 def generate():
     ok, err = _verify_unkey_bearer()
@@ -499,7 +495,7 @@ def generate():
     )
 
 
-@app.get("/health")
+@app.get("/")
 def health():
     return {"ok": True, "service": "reelforge-core"}
 
