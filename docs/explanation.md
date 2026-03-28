@@ -39,7 +39,7 @@ The program asks **kie’s Suno API** to create **upbeat instrumental** music (n
 
 ### Step 4 — Make pictures (visuals)
 
-For **each line**, the program asks **DALL·E 3** to draw **one tall picture** that matches that line. The pictures are saved on the server as files.
+For **each line**, the program asks a **GPT Image** model (e.g. **gpt-image-1**) to draw **one tall picture** that matches that line. The pictures are saved on the server as files.
 
 ### Step 5 — Glue it into a video (assembly)
 

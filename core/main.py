@@ -5,6 +5,7 @@ Run: uvicorn main:asgi_app --app-dir /path/to/core --host 0.0.0.0 --port 8000
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -13,7 +14,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any, Generator, Literal
 
 import httpx
 import railtracks as rt
@@ -44,6 +45,19 @@ KIE_API_BASE = os.environ.get("KIE_API_BASE", "https://api.kie.ai")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 # Text generation via Responses API (not Chat Completions). Pin snapshot in production.
 OPENAI_TEXT_MODEL = os.environ.get("OPENAI_TEXT_MODEL", "gpt-5.4-2026-03-05")
+# Image generation: GPT Image models (DALL·E 3 deprecated May 2026). See docs/reel-image-prompts.md
+OPENAI_IMAGE_MODEL = (os.environ.get("OPENAI_IMAGE_MODEL") or "gpt-image-1").strip()
+_OPENAI_IMAGE_SIZES = frozenset({"auto", "1024x1024", "1536x1024", "1024x1536"})
+OpenAIImageSize = Literal["auto", "1024x1024", "1536x1024", "1024x1536"]
+OpenAIImageModeration = Literal["low", "auto"]
+_raw_img_size = (os.environ.get("OPENAI_IMAGE_SIZE") or "1024x1536").strip()
+OPENAI_IMAGE_SIZE: OpenAIImageSize = (
+    _raw_img_size if _raw_img_size in _OPENAI_IMAGE_SIZES else "1024x1536"
+)
+_raw_img_mod = (os.environ.get("OPENAI_IMAGE_MODERATION") or "low").strip().lower()
+OPENAI_IMAGE_MODERATION: OpenAIImageModeration = (
+    "low" if _raw_img_mod == "low" else "auto"
+)
 KIE_API_KEY = os.environ.get("KIE_API_KEY", "")
 SENSO_KEY = os.environ.get("SENSO_KEY", "")
 KIE_CALLBACK_URL = os.environ.get(
@@ -283,31 +297,56 @@ def generate_tts(lines: list[str]) -> str:
     return str(out)
 
 
+# Filter-safe wording (avoid RAW/analog + people, wet skin triggers, etc.). See docs/reel-image-prompts.md
+_REEL_IMAGE_SUFFIX = (
+    "cinematic still, editorial photograph, "
+    "medium format photography, f/1.4 depth of field, "
+    "cinematic depth of field, volumetric lighting, "
+    "sharp cinematic detail, film grain, vertical 9:16 format, high quality. "
+    "Single clear subject; no text, letters, logos, or watermarks in the frame."
+)
+
+
+def _reel_image_prompt(line: str) -> str:
+    """Subject-first reel still; safe phrasing for GPT Image moderation."""
+    subject = (line or "").strip()
+    if not subject:
+        subject = "a cinematic lifestyle moment with strong focal interest"
+    return (
+        f"{subject}, "
+        "golden hour cinematic lighting, shallow depth of field, "
+        "mood and environment matching the beat, "
+        f"{_REEL_IMAGE_SUFFIX}"
+    )[:32000]
+
+
 @rt.function_node
 def generate_visuals(script_lines: list[str]) -> list[str]:
-    """DALL-E 3 per line; returns local file paths (JPEG)."""
+    """GPT Image (e.g. gpt-image-1) per line; returns local JPEG paths. API returns base64, not URLs."""
     client = _client_openai()
     paths: list[str] = []
     for i, line in enumerate(script_lines):
         result = client.images.generate(
-            model="dall-e-3",
-            prompt=(
-                f"Cinematic vertical 9:16 key art for a short video line: {line}. "
-                "Bold lighting, no text in image, single clear subject."
-            )[:4000],
-            size="1024x1792",
-            quality="standard",
+            model=OPENAI_IMAGE_MODEL,
+            prompt=_reel_image_prompt(line),
+            size=OPENAI_IMAGE_SIZE,
+            quality="high",
+            moderation=OPENAI_IMAGE_MODERATION,
             n=1,
+            output_format="jpeg",
         )
-        u = result.data[0].url
-        if not u:
-            raise RuntimeError("DALL-E returned no URL")
-        with httpx.Client(timeout=120.0) as h:
-            im = h.get(u)
-            im.raise_for_status()
-        ext = ".png" if "png" in (u.lower()) else ".jpg"
-        p = OUTPUT_DIR / f"img_{uuid.uuid4().hex}_{i}{ext}"
-        p.write_bytes(im.content)
+        img = result.data[0]
+        if img.b64_json:
+            raw = base64.b64decode(img.b64_json)
+        elif img.url:
+            with httpx.Client(timeout=120.0) as h:
+                r = h.get(img.url)
+                r.raise_for_status()
+                raw = r.content
+        else:
+            raise RuntimeError("Image generation returned no b64_json or url")
+        p = OUTPUT_DIR / f"img_{uuid.uuid4().hex}_{i}.jpg"
+        p.write_bytes(raw)
         paths.append(str(p))
     return paths
 

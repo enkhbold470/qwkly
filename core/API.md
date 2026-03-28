@@ -40,6 +40,8 @@ Each message has an `event:` line and a JSON `data:` line.
 | `done`     | end | `{ "video_url", "filename" }` — `video_url` is absolute if `Host` is available |
 | `error`    | failure | `{ "message": string }` |
 
+The **visuals** step uses **GPT Image** (e.g. `gpt-image-1`) with filter-safe prompts; see **`docs/reel-image-prompts.md`**.
+
 **Example (curl)**
 
 ```bash
